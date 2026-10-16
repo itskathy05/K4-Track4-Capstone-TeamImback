@@ -40,6 +40,18 @@ python webapp.py            # then open http://127.0.0.1:8000
 **Camera tip:** shoulders and hips must be in view, ideally knees and ankles too. A desk webcam that shows only
 your upper body will show "NO POSE". Step back, and a side-on view works best.
 
+## Track 4 pillars used (also in the web demo: tab "Trụ cột Track 4", `/#pillars`)
+
+| Pillar | Strength | Where in code | What it does |
+|---|---|---|---|
+| Representation | strong | `fall_detector.Features`, `_features()`, `_step()` | 33 landmarks → 6 physical features in torso-lengths → 4-state machine |
+| Time | strong | `main.frames/process`, `_features()` (gap, EMA), `_step()` timers, `webapp.Engine._run` | real dt, smoothing, persistence windows, gap reset, long-lie timer, real-time playback + fps |
+| Uncertainty | strong | `_mid()`, `settled`, `Config.min_visibility/still_motion` | visibility gating, state frozen on pose loss, knee fallback, jitter-measured stillness threshold |
+| Evidence | strong | `evaluate.py`, results files, GUI benchmark | holdout 16/21 (falls 6/10, ADL 10/11), failure cases with causes, 35 tests |
+| Data | strong | `download_data.py`, `evaluate.py`, synthetic poses in tests | public UR Fall clips, labels, tune/holdout split, replay, uploads |
+| Geometry | medium | `_features()` (`angle`, `leg_angle`, `ref_torso`) | pixel-space angles, scale-free normalization, leg axis for foreshortened falls; no calibration |
+| Learning | weak | `main.make_landmarker()` | pretrained MediaPipe only; fall decision is rule-based |
+
 ## Run (OpenCV window)
 
 ```powershell

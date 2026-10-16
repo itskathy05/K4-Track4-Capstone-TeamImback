@@ -107,6 +107,17 @@
   .bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 12px 0 6px; }
   .bar i { display: block; height: 100%; width: 0; background: #2b5cff; transition: width .3s; }
   .score { font-size: 22px; font-weight: 800; }
+  .pillars { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+  .pillar { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .pillar h4 { margin: 0 0 8px; font-size: 16px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .pillar h4 em { font-style: normal; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+  .pillar h4 em.strong { background: #22c55e22; color: var(--normal); }
+  .pillar h4 em.mid { background: #3b9eff22; color: var(--recovery); }
+  .pillar h4 em.weak { background: #f5b40022; color: var(--possible); }
+  .pillar dl { margin: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 6px 12px; font-size: 13px; }
+  .pillar dt { color: var(--faint); }
+  .pillar dd { margin: 0; color: var(--text); }
+  .pillar code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; color: #c4cbe0; }
   .count { font-size: 11px; background: var(--alert); color: #fff; border-radius: 99px; padding: 0 6px; margin-left: 4px; }
   @media (max-width: 1100px) {
     main { grid-template-columns: 1fr; }
@@ -200,6 +211,7 @@
       <button class="tab" data-tab="snaps">Alert snapshots<span class="count" id="snapCount" hidden></span></button>
       <button class="tab" data-tab="results">Test results</button>
       <button class="tab" data-tab="how">How it works</button>
+      <button class="tab" data-tab="pillars">Trụ cột Track 4</button>
     </div>
     <div class="tabpane events active" id="tab-events"><ul id="events"><li class="muted">No events yet.</li></ul></div>
     <div class="tabpane" id="tab-tuning">
@@ -226,6 +238,46 @@
       <div class="results">
         <div><h3>Holdout</h3><p class="summary" id="sumHoldout"></p><table id="tblHoldout"></table></div>
         <div><h3>Tune</h3><p class="summary" id="sumTune"></p><table id="tblTune"></table></div>
+      </div>
+    </div>
+    <div class="tabpane" id="tab-pillars">
+      <p class="muted" style="margin-top:0">Các trụ cột kiến thức Track 4 có trong code, ở đâu và vì sao chọn cách đó. Khi thuyết trình nên nhấn vào bốn trụ mạnh nhất: <b>Biểu diễn, Thời gian, Bất định, Bằng chứng</b>. <b>Học</b> là trụ yếu nhất vì chỉ dùng model có sẵn.</p>
+      <div class="pillars">
+        <div class="pillar"><h4>Biểu diễn <em class="strong">Mạnh</em></h4><dl>
+          <dt>Trong code</dt><dd>Mỗi khung hình → 33 mốc khớp → nén còn 6 đặc trưng có nghĩa vật lý (góc thân, góc chân, tốc độ hông, độ cao hông, chuyển động cơ thể, đơn vị là chiều dài thân) → máy trạng thái NORMAL → POSSIBLE_FALL → FALL_ALERT → RECOVERY.</dd>
+          <dt>Ở đâu</dt><dd><code>fall_detector.py</code>: <code>Features</code>, <code>FallDetector._features()</code>, <code>_step()</code></dd>
+          <dt>Vì sao</dt><dd>Box (tỉ lệ khung) không tách được <i>cúi người</i> với <i>nằm</i> và hỏng khi ngã về phía camera. Mốc khớp cho biết hông có sát sàn không. Biểu diễn bằng trạng thái thay vì nhãn từng khung nên giải thích được vì sao hệ thống báo động.</dd>
+          <dt>Xem ở demo</dt><dd>Thẻ trạng thái, chip điều kiện (Fast movement / Body flat / Hips low), tab How it works.</dd></dl></div>
+        <div class="pillar"><h4>Thời gian <em class="strong">Mạnh</em></h4><dl>
+          <dt>Trong code</dt><dd>Tốc độ tính theo timestamp thật (dt), không theo số khung. Làm mượt EMA. Điều kiện phải kéo dài: nằm ≥ <i>alert_hold</i> 1 s, cửa sổ <i>possible_window</i> 1,5 s. Mất pose quá <i>max_gap</i> thì reset vận tốc. Timestamp ms tăng nghiêm ngặt cho MediaPipe VIDEO mode. Đếm "nằm bất động" 5 s. Phát video đúng tốc độ thực và đo FPS.</dd>
+          <dt>Ở đâu</dt><dd><code>main.frames()</code>, <code>main.process()</code>, <code>FallDetector._features()</code> (gap, EMA), <code>_step()</code> (<code>lying_since</code>, <code>still_since</code>), <code>webapp.Engine._run()</code></dd>
+          <dt>Vì sao</dt><dd>Một khung bất thường không được thành báo động. Dùng dt thật thì ngưỡng vẫn đúng dù webcam chạy 15 hay 30 fps.</dd>
+          <dt>Xem ở demo</dt><dd>Dải trạng thái 15 s, các biểu đồ, ô Processing (fps), đếm ngược "Motionless after fall".</dd></dl></div>
+        <div class="pillar"><h4>Bất định <em class="strong">Mạnh</em></h4><dl>
+          <dt>Trong code</dt><dd>Bỏ cặp mốc có visibility &lt; 0,5. Mất pose thì <b>giữ nguyên trạng thái</b> (không tự xoá báo động) và hiện "NO POSE". Mắt cá bị che thì dùng đầu gối. Đo nhiễu mốc khi người nằm yên (0,07–0,19 thân/s trên adl-10) để đặt ngưỡng bất động 0,3. Rung mốc khi đã nằm yên không mở POSSIBLE_FALL.</dd>
+          <dt>Ở đâu</dt><dd><code>fall_detector._mid()</code>, <code>_features()</code>, <code>_step()</code> (<code>settled</code>), <code>Config.min_visibility</code>, <code>Config.still_motion</code></dd>
+          <dt>Vì sao</dt><dd>Với người già, thà giữ báo động khi mất tín hiệu còn hơn tự xoá. Ngưỡng được đặt từ số đo nhiễu chứ không đoán.</dd>
+          <dt>Xem ở demo</dt><dd>Chip Pose found, dòng "(no pose: state frozen)", thanh trượt <i>min_visibility</i>, <i>still_motion</i>.</dd></dl></div>
+        <div class="pillar"><h4>Bằng chứng <em class="strong">Mạnh</em></h4><dl>
+          <dt>Số đo</dt><dd>Holdout <b>16/21</b> (bắt được ngã 6/10, sinh hoạt không báo nhầm 10/11), tune 9/10. 35 unit test. Holdout chỉ chạy <b>một lần</b>, không chỉnh ngưỡng theo nó.</dd>
+          <dt>Ca lỗi</dt><dd>fall-14/15: clip hết trước 1 s nằm. fall-06: hông cao 0,70 &gt; 0,6. fall-13: MediaPipe mất người. adl-10/11: lên giường nằm nhanh nên bị báo nhầm.</dd>
+          <dt>Giới hạn</dt><dd>Một người, camera nhìn ngang, clip ngắn, chưa kiểm chứng y khoa. Đây không phải số đo độ chính xác chính thức.</dd>
+          <dt>Xem ở demo</dt><dd>Tab Test results, nút <b>Run</b> benchmark với ngưỡng hiện tại, tab Alert snapshots.</dd></dl></div>
+        <div class="pillar"><h4>Dữ liệu <em class="strong">Mạnh</em></h4><dl>
+          <dt>Trong code</dt><dd>Bộ dữ liệu công khai UR Fall Detection (31 clip), có script tải lại được. Tự gán nhãn hoạt động cho clip ADL. Tách tune/holdout. Replay mọi clip qua đúng pipeline live. Upload video riêng. Dùng tư thế tổng hợp cho unit test. Không dùng dữ liệu thật của bệnh nhân.</dd>
+          <dt>Ở đâu</dt><dd><code>download_data.py</code>, <code>evaluate.py</code>, <code>webapp.list_sources()</code>, <code>test_fall_detector.py</code> (<code>pose()</code>, <code>ramp()</code>)</dd>
+          <dt>Vì sao</dt><dd>Không thể ngã thật 20 lần để chỉnh ngưỡng. Replay giúp mỗi lần thay đổi đều đo lại được.</dd>
+          <dt>Xem ở demo</dt><dd>Menu chọn nguồn (nhãn hoạt động), Upload video, click một dòng kết quả để phát lại clip đó.</dd></dl></div>
+        <div class="pillar"><h4>Hình học <em class="mid">Vừa</em></h4><dl>
+          <dt>Trong code</dt><dd>Góc thân và góc chân so với phương thẳng đứng của ảnh, tính bằng <code>atan2</code> trên toạ độ pixel (toạ độ chuẩn hoá 0–1 làm méo góc khi ảnh không vuông). Mọi khoảng cách chia cho chiều dài thân nên không phụ thuộc khoảng cách tới camera. Ngã về phía camera làm thân bị co ngắn do phối cảnh, nên thêm trục vai → mắt cá. Dải "nằm" là [55°, 125°].</dd>
+          <dt>Ở đâu</dt><dd><code>FallDetector._features()</code> (<code>angle</code>, <code>leg_angle</code>, <code>ref_torso</code>), <code>main.to_points()</code></dd>
+          <dt>Vì sao / giới hạn</dt><dd>Không có thời gian hiệu chuẩn camera, nên chọn đặc trưng tự chuẩn hoá. Giả định camera không nghiêng (trục dọc của ảnh ≈ phương thẳng đứng).</dd>
+          <dt>Xem ở demo</dt><dd>Biểu đồ góc với dải "flat" tô mờ. Clip fall-03 (ngã về phía camera).</dd></dl></div>
+        <div class="pillar"><h4>Học <em class="weak">Yếu: model có sẵn</em></h4><dl>
+          <dt>Trong code</dt><dd>MediaPipe Pose Landmarker pretrained (Lite / Full) nhận ra 33 mốc khớp người. Chúng tôi không train hay fine-tune gì. Phần quyết định ngã là luật, không phải model học.</dd>
+          <dt>Ở đâu</dt><dd><code>main.make_landmarker()</code>, <code>main.process()</code>, <code>webapp.MODELS</code></dd>
+          <dt>Vì sao</dt><dd>2 giờ và quá ít dữ liệu ngã thì không train được. Luật giải thích được và chỉnh được bằng ngưỡng ngay trước mặt giám khảo.</dd>
+          <dt>Xem ở demo</dt><dd>Chọn Lite/Full rồi so sánh % pose found và fps trong benchmark.</dd></dl></div>
       </div>
     </div>
     <div class="tabpane" id="tab-how">
@@ -298,7 +350,7 @@ async function loadSources(selectId) {
     if (!groups[s.group]) { groups[s.group] = document.createElement('optgroup'); groups[s.group].label = s.group; sel.appendChild(groups[s.group]); }
     const o = new Option(s.label, s.id); groups[s.group].appendChild(o);
   }
-  if (selectId) sel.value = selectId;
+  sel.value = selectId || shownSource || 'test_videos/tune/fall-01-cam0.mp4';  // list may load after the first status
 }
 
 async function start(id) {
@@ -519,7 +571,7 @@ window.addEventListener('resize', () => last && render(last));
 const deepTab = document.querySelector(`.tab[data-tab="${location.hash.slice(1)}"]`);  // e.g. /#results
 if (deepTab) deepTab.click();
 $('video').src = '/stream.mjpg';
-loadSources('test_videos/tune/fall-01-cam0.mp4').then(loadResults);
+loadSources().then(loadResults);
 poll();
 </script>
 </body>
