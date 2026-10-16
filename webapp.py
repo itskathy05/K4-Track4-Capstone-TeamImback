@@ -110,24 +110,27 @@ class Engine:
         self.series = collections.deque(maxlen=450)  # ~15 s at 30 fps
         self.events = collections.deque(maxlen=100)
         self._stop, self._thread = threading.Event(), None
+        self._control = threading.RLock()  # one start/stop at a time, so only one worker owns the camera
 
     def start(self, source_id):
         path, crop, label = resolve_source(source_id)
-        self.stop()
-        with self.cond:
-            self.series.clear()
-            self.events.clear()
-            self.status = {"running": True, "source": source_id, "label": label, "state": None,
-                           "error": None, "ended": False}
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, args=(path, crop, self._stop), daemon=True)
-        self._thread.start()
+        with self._control:
+            self.stop()
+            with self.cond:
+                self.series.clear()
+                self.events.clear()
+                self.status = {"running": True, "source": source_id, "label": label, "state": None,
+                               "error": None, "ended": False}
+            self._stop = threading.Event()
+            self._thread = threading.Thread(target=self._run, args=(path, crop, self._stop), daemon=True)
+            self._thread.start()
 
     def stop(self):
-        if self._thread:
-            self._stop.set()
-            self._thread.join(timeout=5)
-            self._thread = None
+        with self._control:
+            if self._thread:
+                self._stop.set()
+                self._thread.join(timeout=5)
+                self._thread = None
 
     def snapshot(self):
         with self.cond:
