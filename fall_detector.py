@@ -22,7 +22,7 @@ class Config:
     horizontal_angle: float = 55.0  # lying = torso (or shoulder->ankle) within [this, 180 - this] deg;
                                     # beyond 180 - this the torso is head-down (crawling), not flat
     upright_angle: float = 30.0     # torso angle from vertical counted as upright
-    hip_low_ratio: float = 0.6      # hip height (torso-lengths above ankles) below this = near floor
+    hip_low_ratio: float = 0.6      # hip height (torso-lengths above ankles, or knees) below this = near floor
     possible_window: float = 1.5    # s allowed between the fast movement and lying
     alert_hold: float = 1.0         # s lying after a fast movement before FALL_ALERT
     recovery_hold: float = 1.0      # s upright before leaving FALL_ALERT
