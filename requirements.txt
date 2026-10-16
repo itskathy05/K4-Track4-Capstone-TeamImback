@@ -1,0 +1,3 @@
+# mediapipe pulls in opencv-contrib-python and numpy. Don't add opencv-python: two cv2 packages clash.
+mediapipe==0.10.35
+pytest
