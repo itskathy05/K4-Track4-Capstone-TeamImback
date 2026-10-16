@@ -64,13 +64,16 @@ def to_points(result, w, h):
     return [(lm.x * w, lm.y * h, lm.visibility or 0.0) for lm in result.pose_landmarks[0]]
 
 
-def draw(frame, points, state, feats, key_hint=True):
+def draw(frame, points, state, feats, hud=True):
+    """Skeleton, plus (hud=True) the state bar, readouts and flashing alert used by the OpenCV window."""
     h, w = frame.shape[:2]
     if points:
         for a, b in BONES:
             if min(points[a][2], points[b][2]) > 0.5:
                 cv2.line(frame, (int(points[a][0]), int(points[a][1])),
                          (int(points[b][0]), int(points[b][1])), (255, 255, 255), 2)
+    if not hud:
+        return
     cv2.rectangle(frame, (0, 0), (w, 30), COLORS[state], -1)
     cv2.putText(frame, state if feats else f"{state}  (NO POSE)", (8, 21), FONT, 0.6, (0, 0, 0), 2)
     if feats:
@@ -80,8 +83,7 @@ def draw(frame, points, state, feats, key_hint=True):
     if state == FALL_ALERT and int(time.monotonic() * 4) % 2 == 0:  # flashing
         cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 10)
         cv2.putText(frame, "POTENTIAL FALL!", (w // 2 - 120, h // 2), FONT, 1.0, (0, 0, 255), 3)
-    if key_hint:
-        cv2.putText(frame, "q/Esc: quit   space: pause", (8, h - 10), FONT, 0.45, (200, 200, 200), 1)
+    cv2.putText(frame, "q/Esc: quit   space: pause", (8, h - 10), FONT, 0.45, (200, 200, 200), 1)
 
 
 def process(source, model=DEFAULT_MODEL, crop_right=False, detector=None):

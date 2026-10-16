@@ -16,7 +16,27 @@ Model download (done by the script, or manually):
 https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task
 → save as `models/pose_landmarker_lite.task`.
 
-## Run
+## Web demo (recommended for presenting)
+
+```powershell
+python webapp.py            # then open http://127.0.0.1:8000
+```
+
+- **Source picker:** webcam, any downloaded UR Fall clip (labelled by activity), or **upload your own video**.
+- **Live view:** the annotated video, a large state badge, condition chips (fast movement / body flat / hips low / upright / pose found) and the live readouts.
+- **Charts:** 15-second charts of torso and leg angle, hip speed and hip height, with the thresholds drawn on them, plus a state timeline.
+- **Tabs:**
+  - **Event log:** every state change.
+  - **Thresholds (live):** sliders that retune the running detector instantly.
+  - **Test results:** click a row to play that clip.
+  - **How it works.**
+- An alarm sound plays during FALL_ALERT (toggle in the toolbar). `/#results` or `/#tuning` opens a tab directly.
+- No extra dependencies (Python standard-library server). It binds to `127.0.0.1` only.
+
+**Camera tip:** shoulders and hips must be in view, ideally knees and ankles too. A desk webcam that shows only
+your upper body will show "NO POSE". Step back, and a side-on view works best.
+
+## Run (OpenCV window)
 
 ```powershell
 python main.py                                                         # webcam
@@ -47,9 +67,10 @@ blue RECOVERY), torso angle, hip speed and hip height. A fall flashes a red fram
    - POSSIBLE_FALL → NORMAL: not lying within `possible_window` s (for example, sitting down fast)
    - FALL_ALERT → RECOVERY: upright (angle ≤ `upright_angle` and hips off the floor) for `recovery_hold` s
    - RECOVERY → NORMAL after `recovery_cooldown` s
-   - No pose: the state is frozen, and velocity history resets after `max_gap` s, so there's no fake speed spike when the person reappears.
+   - No pose: the state is frozen. After a gap longer than `max_gap` s, velocity history resets, so a person reappearing somewhere else doesn't produce a fake speed spike.
 
-Lying down **slowly** never passes the speed gate, so it doesn't alert.
+Lying down **slowly** never passes the speed gate, so it doesn't alert. A jolt while already lying still (for example landmark jitter)
+is ignored: a fast movement only opens POSSIBLE_FALL if the person hadn't already been lying for `alert_hold` s.
 
 ## Thresholds (`fall_detector.Config`)
 

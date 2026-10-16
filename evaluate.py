@@ -12,7 +12,13 @@ from main import DEFAULT_MODEL, run
 
 
 def expand(patterns):
-    return [p for pat in patterns for p in sorted(glob.glob(pat))]
+    paths = []
+    for pat in patterns:
+        found = sorted(glob.glob(pat))
+        if not found:
+            print(f"warning: no clips match {pat}", file=sys.stderr)
+        paths += found
+    return paths
 
 
 if __name__ == "__main__":
@@ -25,6 +31,9 @@ if __name__ == "__main__":
     for path in paths:
         name = Path(path).stem.replace("-cam0", "")
         history = run(path, DEFAULT_MODEL, crop_right=True, show=False)
+        if not history:
+            print(f"| {name} | - | - | - | - | ERROR: no frames read |")
+            continue
         alerts = [t for t, state, _ in history if state == FALL_ALERT]
         expected = name.startswith("fall")
         ok = bool(alerts) == expected

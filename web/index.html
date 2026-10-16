@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fall Detection Demo</title>
+<style>
+  :root {
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --line: #262b37;
+    --text: #e7e9ef; --muted: #8a92a6; --faint: #5b6377;
+    --normal: #22c55e; --possible: #f5b400; --alert: #ef4444; --recovery: #3b9eff;
+    --angle: #a78bfa; --leg: #f472b6; --speed: #38bdf8; --height: #fb923c;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .2px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
+          background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .pill.live .dot { background: var(--normal); box-shadow: 0 0 0 4px #22c55e22; }
+  .pill.err .dot { background: var(--alert); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px 24px; }
+  select, button, .file { height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel);
+          color: var(--text); font: inherit; padding: 0 14px; }
+  select { min-width: 320px; max-width: 100%; }
+  button { cursor: pointer; }
+  button.primary { background: #2b5cff; border-color: #2b5cff; font-weight: 600; }
+  button:hover, .file:hover { filter: brightness(1.15); }
+  .file { display: inline-flex; align-items: center; cursor: pointer; }
+  .file input { display: none; }
+  label.check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 0 24px 24px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .stage { position: relative; overflow: hidden; aspect-ratio: 4 / 3; display: grid; place-items: center; background: #000; }
+  .stage img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .placeholder { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+                 color: var(--muted); padding: 24px; }
+  .placeholder b { display: block; color: var(--text); font-size: 16px; margin-bottom: 6px; }
+  .banner { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); padding: 10px 22px;
+            border-radius: 999px; background: var(--alert); color: #fff; font-weight: 800; letter-spacing: .5px;
+            display: none; box-shadow: 0 8px 30px #ef444466; animation: pulse 0.8s infinite alternate; }
+  .stage.alerting { outline: 4px solid var(--alert); outline-offset: -4px; }
+  .stage.alerting .banner { display: block; }
+  @keyframes pulse { from { opacity: 1; } to { opacity: .55; } }
+  .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .state { padding: 18px; border-left: 6px solid var(--faint); }
+  .state .name { font-size: 26px; font-weight: 800; letter-spacing: .3px; }
+  .state .desc { color: var(--muted); margin-top: 2px; min-height: 2.9em; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--faint); }
+  .chip.on { color: var(--text); border-color: var(--text); background: var(--panel-2); }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); overflow: hidden; }
+  .metric { background: var(--panel); padding: 12px 14px; }
+  .metric .k { color: var(--muted); font-size: 12px; }
+  .metric .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .metric .v small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+  .timeline { padding: 12px 14px; }
+  .timeline canvas { width: 100%; height: 22px; display: block; border-radius: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .charts { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .chart { padding: 12px 14px; }
+  .chart h3, .panel h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .chart canvas { width: 100%; height: 150px; display: block; }
+  .panel { grid-column: 1 / -1; padding: 0; }
+  .tabs { display: flex; gap: 4px; padding: 10px 10px 0; border-bottom: 1px solid var(--line); }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); height: 36px; }
+  .tab.active { color: var(--text); border-bottom-color: #2b5cff; }
+  .tabpane { display: none; padding: 16px; }
+  .tabpane.active { display: block; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--panel-2); }
+  .tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+  .tag.ok { background: #22c55e22; color: var(--normal); }
+  .tag.miss { background: #ef444422; color: var(--alert); }
+  .results { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .results .summary { color: var(--muted); margin: 0 0 8px; }
+  .sliders { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px 28px; }
+  .slider label { display: flex; justify-content: space-between; gap: 8px; }
+  .slider label span:last-child { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .slider p { margin: 2px 0 4px; color: var(--muted); font-size: 12px; }
+  .slider input { width: 100%; accent-color: #2b5cff; }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .node { padding: 8px 14px; border-radius: 10px; font-weight: 700; color: #0d0f13; }
+  .arrow { color: var(--muted); font-size: 12px; max-width: 220px; }
+  .events li { padding: 6px 0; border-bottom: 1px solid var(--line); list-style: none; display: flex; gap: 12px; }
+  .events ul { margin: 0; padding: 0; max-height: 260px; overflow: auto; }
+  .events .when { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 120px; }
+  .muted { color: var(--muted); }
+  .error { color: var(--alert); }
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 1fr; }
+    .charts, .results { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    header, .toolbar { padding-left: 16px; padding-right: 16px; }
+    main { padding: 0 16px 16px; }
+    select { min-width: 0; width: 100%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Real-Time Fall Detection</h1>
+    <div class="sub">MediaPipe Pose Landmarker + rule-based state machine &middot; no model training</div>
+  </div>
+  <div class="spacer"></div>
+  <span id="conn" class="pill"><span class="dot"></span><span id="connText">Idle</span></span>
+</header>
+
+<div class="toolbar">
+  <select id="source" aria-label="Video source"></select>
+  <button id="start" class="primary">&#9654; Start</button>
+  <button id="stop">&#9632; Stop</button>
+  <label class="file">&#8679; Upload video<input id="upload" type="file" accept="video/*"></label>
+  <label class="check"><input id="sound" type="checkbox" checked> Alarm sound</label>
+  <span id="msg" class="muted"></span>
+</div>
+
+<main>
+  <div class="card stage" id="stage">
+    <img id="video" alt="Annotated video stream">
+    <div class="placeholder" id="placeholder">
+      <div><b>Pick a source and press Start</b>Webcam, a public UR Fall dataset clip, or your own video.<br>
+      For the webcam, step back so your shoulders, hips and ideally knees are in view.</div>
+    </div>
+    <div class="banner">&#9888; POTENTIAL FALL DETECTED</div>
+  </div>
+
+  <div class="side">
+    <div class="card state" id="stateCard">
+      <div class="name" id="stateName">&mdash;</div>
+      <div class="desc" id="stateDesc">Not running.</div>
+      <div class="chips">
+        <span class="chip" id="chipFast">Fast movement</span>
+        <span class="chip" id="chipFlat">Body flat</span>
+        <span class="chip" id="chipLow">Hips low</span>
+        <span class="chip" id="chipUp">Upright</span>
+        <span class="chip" id="chipPose">Pose found</span>
+      </div>
+    </div>
+    <div class="card metrics">
+      <div class="metric"><div class="k">Torso angle</div><div class="v" id="mAngle">&ndash;</div></div>
+      <div class="metric"><div class="k">Leg angle</div><div class="v" id="mLeg">&ndash;</div></div>
+      <div class="metric"><div class="k">Hip speed (down)</div><div class="v" id="mSpeed">&ndash;</div></div>
+      <div class="metric"><div class="k">Hip height</div><div class="v" id="mHeight">&ndash;</div></div>
+      <div class="metric"><div class="k">Processing</div><div class="v" id="mFps">&ndash;</div></div>
+      <div class="metric"><div class="k">Video time</div><div class="v" id="mTime">&ndash;</div></div>
+    </div>
+    <div class="card timeline">
+      <h3 class="muted" style="margin:0 0 8px;font-size:13px">State over the last 15 s</h3>
+      <canvas id="timeline"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--normal)"></i>Normal</span>
+        <span><i style="background:var(--possible)"></i>Possible fall</span>
+        <span><i style="background:var(--alert)"></i>Fall alert</span>
+        <span><i style="background:var(--recovery)"></i>Recovery</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="charts">
+    <div class="card chart"><h3>Torso <span style="color:var(--angle)">&#9632;</span> &amp; leg <span style="color:var(--leg)">&#9632;</span> angle from vertical (&deg;) &middot; shaded = "flat" band</h3><canvas id="cAngle"></canvas></div>
+    <div class="card chart"><h3>Hip speed <span style="color:var(--speed)">&#9632;</span> (torso-lengths/s, + = down) &middot; dashed = trigger</h3><canvas id="cSpeed"></canvas></div>
+    <div class="card chart"><h3>Hip height <span style="color:var(--height)">&#9632;</span> (torso-lengths above feet) &middot; dashed = "low"</h3><canvas id="cHeight"></canvas></div>
+  </div>
+
+  <div class="card panel">
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="events">Event log</button>
+      <button class="tab" data-tab="tuning">Thresholds (live)</button>
+      <button class="tab" data-tab="results">Test results</button>
+      <button class="tab" data-tab="how">How it works</button>
+    </div>
+    <div class="tabpane events active" id="tab-events"><ul id="events"><li class="muted">No events yet.</li></ul></div>
+    <div class="tabpane" id="tab-tuning">
+      <p class="muted" style="margin-top:0">Changes apply immediately to the running detector. <button id="reset">Reset to defaults</button></p>
+      <div class="sliders" id="sliders"></div>
+    </div>
+    <div class="tabpane" id="tab-results">
+      <p class="muted" style="margin-top:0">Public UR Fall Detection dataset (Kwolek &amp; Kepski, 2014). Thresholds were tuned on <i>tune</i>; <i>holdout</i> was run once afterwards. Click a row to play that clip.</p>
+      <div class="results">
+        <div><h3>Holdout</h3><p class="summary" id="sumHoldout"></p><table id="tblHoldout"></table></div>
+        <div><h3>Tune</h3><p class="summary" id="sumTune"></p><table id="tblTune"></table></div>
+      </div>
+    </div>
+    <div class="tabpane" id="tab-how">
+      <div class="flow">
+        <span class="node" style="background:var(--normal)">NORMAL</span>
+        <span class="arrow">hip drops fast <b>or</b> torso rotates fast &rarr;</span>
+        <span class="node" style="background:var(--possible)">POSSIBLE_FALL</span>
+        <span class="arrow">body flat <b>and</b> hips low, held for <i>alert_hold</i> &rarr;</span>
+        <span class="node" style="background:var(--alert)">FALL_ALERT</span>
+        <span class="arrow">upright for <i>recovery_hold</i> &rarr;</span>
+        <span class="node" style="background:var(--recovery)">RECOVERY</span>
+        <span class="arrow">after cooldown &rarr; NORMAL</span>
+      </div>
+      <ul class="muted">
+        <li>All distances are in <b>torso-lengths</b>, so the camera distance doesn't matter.</li>
+        <li><b>Body flat</b>: torso or shoulder&rarr;ankle line within the band [h, 180&minus;h] degrees from vertical. The leg line catches falls toward the camera.</li>
+        <li><b>Hips low</b>: hips close to the ankles (or the knees if the ankles are hidden). This separates lying from bending or kneeling.</li>
+        <li>Possible fall with no lying inside <i>possible_window</i> &rarr; back to NORMAL (e.g. sitting down fast).</li>
+        <li>Lying down <b>slowly</b> never triggers. A jolt while already lying still is ignored.</li>
+        <li>Pose lost &rarr; state frozen (an alert stays up) and speed history reset.</li>
+      </ul>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const css = getComputedStyle(document.documentElement);
+const C = n => css.getPropertyValue('--' + n).trim();
+const STATE = {
+  NORMAL: { color: C('normal'), desc: 'No fall detected.' },
+  POSSIBLE_FALL: { color: C('possible'), desc: 'Fast drop or rotation seen. Watching for a lying posture.' },
+  FALL_ALERT: { color: C('alert'), desc: 'Lying after a fast movement: potential fall!' },
+  RECOVERY: { color: C('recovery'), desc: 'Back upright. Cooling down before NORMAL.' },
+};
+const WINDOW = 15; // seconds shown in charts
+const SLIDERS = {
+  fall_speed: [0.2, 5, 0.1, 'Downward hip speed that opens a possible fall (torso-lengths/s)'],
+  angle_rate: [30, 400, 5, 'Torso rotation speed that opens a possible fall (deg/s)'],
+  horizontal_angle: [30, 85, 1, '"Flat" band is [h, 180-h] degrees from vertical'],
+  hip_low_ratio: [0.1, 1.5, 0.05, 'Hip height at or below this counts as hips on the floor'],
+  alert_hold: [0.2, 5, 0.1, 'Seconds lying before FALL_ALERT'],
+  possible_window: [0.5, 5, 0.1, 'Seconds allowed between the fast movement and lying'],
+  upright_angle: [5, 60, 1, 'Torso angle counted as upright (deg)'],
+  recovery_hold: [0.2, 5, 0.1, 'Seconds upright before leaving FALL_ALERT'],
+  recovery_cooldown: [0.5, 10, 0.5, 'Seconds in RECOVERY before NORMAL'],
+  smooth_alpha: [0.05, 1, 0.05, 'Smoothing: weight of the newest frame (1 = none)'],
+  min_visibility: [0, 1, 0.05, 'Landmark visibility needed to use a point'],
+  max_gap: [0.1, 3, 0.1, 'Pose gap (s) after which speed history resets'],
+};
+let sources = [], last = null, shownSource = null, cfg = null, configSentAt = 0, audio = null, beepTimer = null;
+
+async function api(path, body) {
+  const opts = body === undefined ? {} : { method: 'POST', body: typeof body === 'string' || body instanceof Blob ? body : JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+function say(text, isError) { $('msg').textContent = text || ''; $('msg').className = isError ? 'error' : 'muted'; }
+
+async function loadSources(selectId) {
+  sources = await api('/api/sources');
+  const sel = $('source'), groups = {};
+  sel.innerHTML = '';
+  for (const s of sources) {
+    if (!groups[s.group]) { groups[s.group] = document.createElement('optgroup'); groups[s.group].label = s.group; sel.appendChild(groups[s.group]); }
+    const o = new Option(s.label, s.id); groups[s.group].appendChild(o);
+  }
+  if (selectId) sel.value = selectId;
+}
+
+async function start(id) {
+  if (id) $('source').value = id;
+  ensureAudio();
+  try { await api('/api/start', { source: $('source').value }); say(''); }
+  catch (e) { say(e.message, true); }
+}
+
+$('start').onclick = () => start();
+$('stop').onclick = () => api('/api/stop', {}).catch(e => say(e.message, true));
+$('upload').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  say('Uploading ' + f.name + '...');
+  try {
+    const r = await api('/api/upload?name=' + encodeURIComponent(f.name), f);
+    await loadSources(r.id); await start(r.id);
+  } catch (err) { say(err.message, true); }
+  e.target.value = '';
+};
+
+// ---- tabs
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab, .tabpane').forEach(x => x.classList.remove('active'));
+  t.classList.add('active'); $('tab-' + t.dataset.tab).classList.add('active');
+});
+
+// ---- alarm sound (WebAudio; needs one user click first, which Start provides)
+function ensureAudio() { try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {} }
+function beep() {
+  if (!audio || !$('sound').checked) return;
+  const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime;
+  o.type = 'square'; o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.15, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25); o.start(t); o.stop(t + 0.3);
+}
+
+// ---- charts
+function setupCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+  return { c, w, h };
+}
+function drawChart(cv, series, lines, opt) {
+  const { c, w, h } = setupCanvas(cv), pad = { l: 34, r: 8, t: 6, b: 16 };
+  const t1 = series.length ? series[series.length - 1].t : WINDOW, t0 = t1 - WINDOW;
+  const X = t => pad.l + (t - t0) / WINDOW * (w - pad.l - pad.r);
+  const Y = v => pad.t + (1 - (Math.max(opt.min, Math.min(opt.max, v)) - opt.min) / (opt.max - opt.min)) * (h - pad.t - pad.b);
+  if (opt.band) { c.fillStyle = '#ffffff10'; c.fillRect(pad.l, Y(opt.band[1]), w - pad.l - pad.r, Y(opt.band[0]) - Y(opt.band[1])); }
+  c.font = '10px system-ui'; c.fillStyle = C('faint'); c.strokeStyle = C('line'); c.lineWidth = 1;
+  for (const v of opt.ticks) { const y = Y(v); c.beginPath(); c.moveTo(pad.l, y); c.lineTo(w - pad.r, y); c.stroke(); c.fillText(String(v), 4, y + 3); }
+  for (const L of opt.thresholds || []) {
+    c.setLineDash([5, 4]); c.strokeStyle = C('text'); c.globalAlpha = .6; c.beginPath();
+    c.moveTo(pad.l, Y(L)); c.lineTo(w - pad.r, Y(L)); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
+  }
+  for (const [key, color] of lines) {
+    c.strokeStyle = color; c.lineWidth = 2; c.beginPath(); let pen = false;
+    for (const p of series) {
+      const v = p[key];
+      if (v === null || v === undefined || p.t < t0) { pen = false; continue; }
+      pen ? c.lineTo(X(p.t), Y(v)) : c.moveTo(X(p.t), Y(v)); pen = true;
+    }
+    c.stroke();
+  }
+}
+function drawTimeline(series) {
+  const cv = $('timeline'), { c, w, h } = setupCanvas(cv);
+  c.fillStyle = C('panel-2'); c.fillRect(0, 0, w, h);
+  if (!series.length) return;
+  const t1 = series[series.length - 1].t, t0 = t1 - WINDOW, X = t => (t - t0) / WINDOW * w;
+  for (let i = 0; i < series.length; i++) {
+    const p = series[i], next = series[i + 1] ? series[i + 1].t : t1 + 0.04;
+    if (next < t0) continue;
+    c.fillStyle = STATE[p.state].color; c.fillRect(X(Math.max(p.t, t0)), 0, X(next) - X(Math.max(p.t, t0)) + 0.5, h);
+  }
+}
+
+// ---- status rendering
+const fmt = (v, d, unit) => v === null || v === undefined ? '&ndash;' : `${v.toFixed(d)}<small>${unit}</small>`;
+function render(s) {
+  const f = s.features, state = s.state;
+  const running = s.running, hasFrames = s.series.length > 0;
+  if (s.source && s.source !== shownSource) { shownSource = s.source; $('source').value = s.source; }
+  $('placeholder').style.display = hasFrames || running ? 'none' : 'grid';
+  $('conn').className = 'pill' + (s.error ? ' err' : running ? ' live' : '');
+  $('connText').textContent = s.error ? 'Error' : running ? 'Live: ' + s.label : s.ended ? 'Ended: ' + s.label : 'Idle';
+  if (s.error) say(s.error, true);
+
+  const st = STATE[state];
+  $('stateName').textContent = state ? state.replace('_', ' ') : (running ? 'Starting...' : '—');
+  $('stateName').style.color = st ? st.color : '';
+  $('stateCard').style.borderLeftColor = st ? st.color : C('faint');
+  $('stateDesc').textContent = st ? st.desc + (running && !f ? ' (no pose: state frozen)' : '') : (running ? 'Loading model and opening source...' : 'Not running.');
+  $('stage').classList.toggle('alerting', state === 'FALL_ALERT');
+  document.title = state === 'FALL_ALERT' ? '⚠ FALL ALERT - Fall Detection Demo' : 'Fall Detection Demo';
+
+  const k = s.config;
+  const lo = k.horizontal_angle, hi = 180 - k.horizontal_angle, inBand = a => a !== null && a !== undefined && a >= lo && a <= hi;
+  const low = f && f.hip_height !== null && f.hip_height <= k.hip_low_ratio;
+  const on = (id, v) => $(id).classList.toggle('on', !!v);
+  on('chipFast', f && (f.hip_speed >= k.fall_speed || f.angle_rate >= k.angle_rate));
+  on('chipFlat', f && (inBand(f.angle) || inBand(f.leg_angle)));
+  on('chipLow', f && (f.hip_height === null || low));
+  on('chipUp', f && f.angle <= k.upright_angle && !low);
+  on('chipPose', !!f);
+
+  $('mAngle').innerHTML = fmt(f && f.angle, 0, '°');
+  $('mLeg').innerHTML = fmt(f && f.leg_angle, 0, '°');
+  $('mSpeed').innerHTML = fmt(f && f.hip_speed, 2, ' tl/s');
+  $('mHeight').innerHTML = fmt(f && f.hip_height, 2, ' tl');
+  $('mFps').innerHTML = fmt(s.fps, 0, ' fps');
+  $('mTime').innerHTML = fmt(s.t, 1, ' s');
+
+  drawChart($('cAngle'), s.series, [['angle', C('angle')], ['leg_angle', C('leg')]], { min: 0, max: 180, ticks: [0, 45, 90, 135, 180], band: [lo, hi], thresholds: [k.upright_angle] });
+  drawChart($('cSpeed'), s.series, [['hip_speed', C('speed')]], { min: -3, max: 6, ticks: [-3, 0, 3, 6], thresholds: [k.fall_speed] });
+  drawChart($('cHeight'), s.series, [['hip_height', C('height')]], { min: -0.5, max: 2, ticks: [0, 1, 2], thresholds: [k.hip_low_ratio] });
+  drawTimeline(s.series);
+
+  $('events').innerHTML = s.events.length ? s.events.map(e =>
+    `<li><span class="when">${e.clock} &middot; ${e.t.toFixed(1)} s</span><span>${e.from ? e.from + ' &rarr; ' : ''}<b style="color:${STATE[e.to].color}">${e.to}</b></span></li>`).join('')
+    : '<li class="muted">No events yet.</li>';
+
+  if (Date.now() - configSentAt > 1000) syncSliders(k);
+  if (state === 'FALL_ALERT' && !beepTimer) { beep(); beepTimer = setInterval(beep, 700); }
+  if (state !== 'FALL_ALERT' && beepTimer) { clearInterval(beepTimer); beepTimer = null; }
+}
+
+// ---- thresholds
+function buildSliders(k) {
+  $('sliders').innerHTML = Object.entries(SLIDERS).map(([name, [min, max, step, help]]) => `
+    <div class="slider"><label for="s_${name}"><span>${name}</span><span id="v_${name}"></span></label>
+    <p>${help}</p><input id="s_${name}" type="range" min="${min}" max="${max}" step="${step}" data-name="${name}"></div>`).join('');
+  document.querySelectorAll('#sliders input').forEach(inp => inp.oninput = () => {
+    $('v_' + inp.dataset.name).textContent = inp.value; configSentAt = Date.now();
+    clearTimeout(inp._t); inp._t = setTimeout(() => api('/api/config', { [inp.dataset.name]: Number(inp.value) }).catch(e => say(e.message, true)), 120);
+  });
+  syncSliders(k);
+}
+function syncSliders(k) {
+  for (const name of Object.keys(SLIDERS)) {
+    const inp = $('s_' + name); if (!inp || document.activeElement === inp) continue;
+    inp.value = k[name]; $('v_' + name).textContent = k[name];
+  }
+}
+$('reset').onclick = async () => { configSentAt = 0; syncSliders(await api('/api/config/reset', {})); };
+
+// ---- results
+async function loadResults() {
+  const r = await api('/api/results');
+  for (const [split, tbl, sum] of [['holdout', 'tblHoldout', 'sumHoldout'], ['tune', 'tblTune', 'sumTune']]) {
+    const rows = r[split] || [];
+    const ok = rows.filter(x => x.result === 'OK').length;
+    $(sum).textContent = rows.length ? `${ok}/${rows.length} clips as expected` : 'No results yet (run evaluate.py).';
+    $(tbl).innerHTML = '<tr><th>Clip</th><th>Expected</th><th>Alerted</th><th>First alert</th><th>Pose</th><th></th></tr>' +
+      rows.map(x => `<tr class="clickable" data-clip="${x.clip}"><td>${x.clip}</td><td>${x.expected}</td><td>${x.alerted}</td>
+        <td>${x['first alert (s)']}</td><td>${x['pose found']}</td><td><span class="tag ${x.result === 'OK' ? 'ok' : 'miss'}">${x.result}</span></td></tr>`).join('');
+  }
+  document.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => {
+    const s = sources.find(s => s.id.includes('/' + tr.dataset.clip + '-cam0'));
+    if (s) { start(s.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  });
+}
+
+// ---- main loop
+async function poll() {
+  try { const s = await api('/api/status'); last = s; if (!cfg) { cfg = s.config; buildSliders(cfg); } render(s); }
+  catch (e) { $('connText').textContent = 'Server offline'; $('conn').className = 'pill err'; }
+  setTimeout(poll, 150);
+}
+window.addEventListener('resize', () => last && render(last));
+const deepTab = document.querySelector(`.tab[data-tab="${location.hash.slice(1)}"]`);  // e.g. /#results
+if (deepTab) deepTab.click();
+$('video').src = '/stream.mjpg';
+loadSources('test_videos/tune/fall-01-cam0.mp4').then(loadResults);
+poll();
+</script>
+</body>
+</html>
