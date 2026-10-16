@@ -132,3 +132,11 @@ def test_head_down_torso_with_legs_out_of_frame_is_not_lying():
     states = run([pose(**STAND)] * 30 + ramp(12, STAND, inverted, ankle_vis=0.1, knee_vis=0.1)
                  + [pose(**inverted, ankle_vis=0.1, knee_vis=0.1)] * 90)
     assert POSSIBLE_FALL in states and FALL_ALERT not in states
+
+
+def test_jitter_while_already_lying_does_not_alert_instantly():
+    # lie down slowly, stay down 3 s, then one frame of landmark jitter (hip jumps 12 px)
+    lying = [pose(**STAND)] * 30 + ramp(120, STAND, LYING) + [pose(**LYING)] * 90
+    jitter = [pose(**dict(LYING, hip_y=LYING["hip_y"] + 12))]
+    states = run(lying + jitter + [pose(**LYING)] * 90)
+    assert set(states) == {NORMAL}

@@ -134,7 +134,9 @@ class FallDetector:
             self.upright_since = t
 
         if self.state == NORMAL:
-            if f.hip_speed >= c.fall_speed or f.angle_rate >= c.angle_rate:
+            # a jolt while already lying still (e.g. landmark jitter on a sofa) is not a fall
+            settled = self.lying_since is not None and t - self.lying_since >= c.alert_hold
+            if (f.hip_speed >= c.fall_speed or f.angle_rate >= c.angle_rate) and not settled:
                 self._enter(POSSIBLE_FALL, t)
         elif self.state == POSSIBLE_FALL:
             if self.lying_since is not None and t - self.lying_since >= c.alert_hold:
