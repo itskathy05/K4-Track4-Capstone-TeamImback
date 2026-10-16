@@ -26,3 +26,10 @@ def test_pipeline_finds_the_person_on_a_ur_clip():
     history = run(str(CLIP), DEFAULT_MODEL, crop_right=True, show=False)
     assert len(history) > 100
     assert sum(has_pose for _, _, has_pose in history) > 0.7 * len(history)
+
+
+def test_to_points_treats_missing_visibility_as_invisible():
+    from types import SimpleNamespace as NS
+    from main import to_points
+    result = NS(pose_landmarks=[[NS(x=0.5, y=0.25, visibility=None)]])
+    assert to_points(result, 640, 480) == [(320.0, 120.0, 0.0)]

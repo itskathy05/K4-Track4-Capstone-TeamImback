@@ -7,6 +7,7 @@ Usage:
 Keys: q or Esc = quit, space = pause/resume.
 """
 import argparse
+import contextlib
 import time
 from pathlib import Path
 
@@ -60,10 +61,10 @@ def to_points(result, w, h):
     """First detected pose as 33 x (x_px, y_px, visibility), or None."""
     if not result.pose_landmarks:
         return None
-    return [(lm.x * w, lm.y * h, lm.visibility) for lm in result.pose_landmarks[0]]
+    return [(lm.x * w, lm.y * h, lm.visibility or 0.0) for lm in result.pose_landmarks[0]]
 
 
-def draw(frame, points, state, feats):
+def draw(frame, points, state, feats, key_hint=True):
     h, w = frame.shape[:2]
     if points:
         for a, b in BONES:
@@ -79,12 +80,13 @@ def draw(frame, points, state, feats):
     if state == FALL_ALERT and int(time.monotonic() * 4) % 2 == 0:  # flashing
         cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 10)
         cv2.putText(frame, "POTENTIAL FALL!", (w // 2 - 120, h // 2), FONT, 1.0, (0, 0, 255), 3)
-    cv2.putText(frame, "q/Esc: quit   space: pause", (8, h - 10), FONT, 0.45, (200, 200, 200), 1)
+    if key_hint:
+        cv2.putText(frame, "q/Esc: quit   space: pause", (8, h - 10), FONT, 0.45, (200, 200, 200), 1)
 
 
-def run(source, model=DEFAULT_MODEL, crop_right=False, show=True):
-    """Process one source. Returns [(t, state, has_valid_pose)] per frame."""
-    detector, history, last_ms = FallDetector(), [], -1
+def process(source, model=DEFAULT_MODEL, crop_right=False, detector=None):
+    """Yield (t, frame, points, state, features) per frame. Shared by the CLI and the web demo."""
+    detector, last_ms = detector or FallDetector(), -1
     landmarker = make_landmarker(model)
     try:
         for t, frame in frames(source, crop_right):
@@ -95,17 +97,27 @@ def run(source, model=DEFAULT_MODEL, crop_right=False, show=True):
                 frame = cv2.resize(frame, None, fx=2, fy=2)
             points = to_points(result, frame.shape[1], frame.shape[0])
             state, feats = detector.update(points, t)
-            history.append((t, state, feats is not None))
-            if show:
-                draw(frame, points, state, feats)
-                cv2.imshow("Fall detection", frame)
-                key = cv2.waitKey(1) & 0xFF
-                if key in (ord("q"), 27):
-                    break
-                if key == ord(" "):
-                    cv2.waitKey(0)
+            yield t, frame, points, state, feats
     finally:
         landmarker.close()
+
+
+def run(source, model=DEFAULT_MODEL, crop_right=False, show=True):
+    """Process one source. Returns [(t, state, has_valid_pose)] per frame."""
+    history = []
+    try:
+        with contextlib.closing(process(source, model, crop_right)) as stream:
+            for t, frame, points, state, feats in stream:
+                history.append((t, state, feats is not None))
+                if show:
+                    draw(frame, points, state, feats)
+                    cv2.imshow("Fall detection", frame)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key in (ord("q"), 27):
+                        break
+                    if key == ord(" "):
+                        cv2.waitKey(0)
+    finally:
         if show:
             cv2.destroyAllWindows()
     return history
