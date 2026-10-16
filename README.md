@@ -30,7 +30,11 @@ python webapp.py            # then open http://127.0.0.1:8000
   - **Thresholds (live):** sliders that retune the running detector instantly.
   - **Test results:** click a row to play that clip.
   - **How it works.**
-- An alarm sound plays during FALL_ALERT (toggle in the toolbar). `/#results` or `/#tuning` opens a tab directly.
+- **Pose model selector:** Lite (fast) or Full (more accurate). The pill in the top-right shows which model is running.
+- **Long-lie escalation:** during a fall alert, the page counts how long the person has been motionless. After `still_alert` s the alert becomes **NO MOVEMENT: CALL FOR HELP**.
+- **Alert snapshots:** the frame at every fall alert and every escalation, shown in a gallery tab.
+- **Benchmark with current thresholds** (Results tab): re-runs the public clips with the slider values and fills in the score clip by clip.
+- An alarm sound plays during FALL_ALERT (toggle in the toolbar). `/#results`, `/#tuning` or `/#snaps` opens a tab directly.
 - No extra dependencies (Python standard-library server). It binds to `127.0.0.1` only.
 
 **Camera tip:** shoulders and hips must be in view, ideally knees and ankles too. A desk webcam that shows only
@@ -67,6 +71,7 @@ blue RECOVERY), torso angle, hip speed and hip height. A fall flashes a red fram
    - POSSIBLE_FALL → NORMAL: not lying within `possible_window` s (for example, sitting down fast)
    - FALL_ALERT → RECOVERY: upright (angle ≤ `upright_angle` and hips off the floor) for `recovery_hold` s
    - RECOVERY → NORMAL after `recovery_cooldown` s
+   - **Long lie:** during FALL_ALERT, body motion (smoothed hip and shoulder movement, torso-lengths/s) below `still_motion` for `still_alert` s escalates the alert to "no movement". The 0.3 threshold sits above the landmark jitter of someone lying still (0.07–0.19 measured on adl-10) and below the movement people make settling after a fall (0.5–1.4).
    - No pose: the state is frozen. After a gap longer than `max_gap` s, velocity history resets, so a person reappearing somewhere else doesn't produce a fake speed spike.
 
 Lying down **slowly** never passes the speed gate, so it doesn't alert. A jolt while already lying still (for example landmark jitter)
@@ -88,6 +93,8 @@ is ignored: a fast movement only opens POSSIBLE_FALL if the person hadn't alread
 | `alert_hold` | 1.0 s | lying time before FALL_ALERT |
 | `recovery_hold` | 1.0 s | upright time before leaving FALL_ALERT |
 | `recovery_cooldown` | 2.0 s | time in RECOVERY before NORMAL |
+| `still_motion` | 0.3 torso/s | body motion below this counts as motionless |
+| `still_alert` | 5.0 s | motionless time during an alert before escalating |
 
 Changes made during tuning (on the `tune` split only): `horizontal_angle` 60 → 55; the leg-angle signal was added
 (fall-03 falls toward the camera); knees are used for hip height when ankles are hidden, and the lying band now has

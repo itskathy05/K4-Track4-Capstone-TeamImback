@@ -7,6 +7,7 @@ Binds to localhost only: it can open the webcam and accepts uploads.
 import argparse
 import collections
 import contextlib
+import copy
 import dataclasses
 import json
 import math
@@ -19,14 +20,16 @@ from urllib.parse import parse_qs, urlparse
 
 import cv2
 
-from fall_detector import Config, FallDetector
-from main import DEFAULT_MODEL, draw, process
+from evaluate import score_clip
+from fall_detector import FALL_ALERT, Config, FallDetector
+from main import draw, process, run
 
 ROOT = Path(__file__).parent
 CLIPS = ROOT / "test_videos"
 UPLOADS = ROOT / "uploads"
 PAGE = ROOT / "web" / "index.html"
 VIDEO_EXT = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+MODELS = {name: ROOT / "models" / f"pose_landmarker_{name}.task" for name in ("lite", "full")}
 MAX_UPLOAD = 200 * 1024 * 1024
 # activities in the public UR Fall clips (labelled by watching them; see README)
 ACTIVITY = {"adl-01": "crouch", "adl-02": "crouch", "adl-04": "bend down", "adl-05": "bend down",
@@ -61,6 +64,20 @@ def resolve_source(source_id):
                 return source_id[4:], False, s["label"]
             return str(ROOT / source_id), source_id.startswith("test_videos/"), s["label"]
     raise ValueError(f"unknown source: {source_id!r}")
+
+
+def resolve_model(name):
+    if name not in MODELS:
+        raise ValueError(f"unknown model: {name!r}")
+    return str(MODELS[name])
+
+
+def benchmark_clips(split):
+    """[(clip name, path)] for 'tune', 'holdout' or 'all'."""
+    if split not in ("tune", "holdout", "all"):
+        raise ValueError(f"unknown split: {split!r}")
+    pattern = "*/*-cam0.mp4" if split == "all" else f"{split}/*-cam0.mp4"
+    return [(p.stem.replace("-cam0", ""), str(p)) for p in sorted(CLIPS.glob(pattern))]
 
 
 def safe_upload_name(name):
@@ -99,6 +116,57 @@ def parse_results(md):
     return [dict(zip(cells[0], row)) for row in cells[2:]]
 
 
+class Benchmark:
+    """Re-runs the dataset evaluation in the background with a frozen copy of the current thresholds."""
+
+    def __init__(self, runner=None):
+        self.runner = runner or (lambda path, model, cfg: run(path, model, crop_right=True, show=False, config=cfg))
+        self.lock = threading.Lock()
+        self.state = {"running": False, "split": None, "done": 0, "total": 0, "rows": [], "correct": 0}
+        self._thread, self._cancel = None, threading.Event()
+
+    def start(self, clips, model, cfg, split):
+        self.cancel()
+        frozen = copy.copy(cfg)
+        with self.lock:
+            self.state = {"running": True, "split": split, "done": 0, "total": len(clips), "rows": [], "correct": 0,
+                          "config": dataclasses.asdict(frozen)}
+        self._cancel = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(clips, model, frozen, self._cancel), daemon=True)
+        self._thread.start()
+
+    def cancel(self):
+        if self._thread:
+            self._cancel.set()
+            self._thread.join(timeout=10)
+
+    def join(self):
+        if self._thread:
+            self._thread.join()
+
+    def snapshot(self):
+        with self.lock:
+            return {**self.state, "rows": list(self.state["rows"])}
+
+    def _run(self, clips, model, cfg, cancel):
+        try:
+            for name, path in clips:
+                if cancel.is_set():
+                    break
+                try:
+                    history = self.runner(path, model, cfg)
+                    row = score_clip(name, history) if history else {"clip": name, "result": "ERROR: no frames"}
+                except (Exception, SystemExit) as e:
+                    row = {"clip": name, "result": f"ERROR: {e}"}
+                with self.lock:
+                    self.state["rows"].append(row)
+                    self.state["done"] += 1
+                    self.state["correct"] += row["result"] == "OK"
+        finally:
+            with self.lock:
+                self.state["running"] = False
+
+
 class Engine:
     """Runs one source at a time in a worker thread; HTTP handlers read its latest frame and status."""
 
@@ -109,20 +177,24 @@ class Engine:
         self.status = {"running": False, "label": None, "state": None, "error": None}
         self.series = collections.deque(maxlen=450)  # ~15 s at 30 fps
         self.events = collections.deque(maxlen=100)
+        self.snapshots = collections.deque(maxlen=12)  # frames captured at alerts, newest last
+        self._snap_id = 0
+        self.detector = None
         self._stop, self._thread = threading.Event(), None
         self._control = threading.RLock()  # one start/stop at a time, so only one worker owns the camera
 
-    def start(self, source_id):
+    def start(self, source_id, model="lite"):
         path, crop, label = resolve_source(source_id)
+        model_path = resolve_model(model)
         with self._control:
             self.stop()
             with self.cond:
                 self.series.clear()
                 self.events.clear()
-                self.status = {"running": True, "source": source_id, "label": label, "state": None,
-                               "error": None, "ended": False}
+                self.status = {"running": True, "source": source_id, "label": label, "model": model,
+                               "state": None, "error": None, "ended": False, "still_for": 0.0, "escalated": False}
             self._stop = threading.Event()
-            self._thread = threading.Thread(target=self._run, args=(path, crop, self._stop), daemon=True)
+            self._thread = threading.Thread(target=self._run, args=(path, model_path, crop, self._stop), daemon=True)
             self._thread.start()
 
     def stop(self):
@@ -134,13 +206,26 @@ class Engine:
 
     def snapshot(self):
         with self.cond:
+            snaps = [{k: v for k, v in s.items() if k != "jpg"} for s in reversed(self.snapshots)]
             return {**self.status, "series": list(self.series), "events": list(self.events)[::-1],
-                    "config": dataclasses.asdict(self.cfg)}
+                    "config": dataclasses.asdict(self.cfg), "snapshots": snaps}
 
-    def _run(self, path, crop, stop):
+    def snapshot_jpg(self, snap_id):
+        with self.cond:
+            return next((s["jpg"] for s in self.snapshots if s["id"] == snap_id), None)
+
+    def _capture(self, kind, t, jpg):
+        """Keep the frame of an alert for the gallery (call with self.cond held)."""
+        self._snap_id += 1
+        self.snapshots.append({"id": self._snap_id, "kind": kind, "t": round(t, 1), "label": self.status["label"],
+                               "clock": time.strftime("%H:%M:%S"), "jpg": jpg})
+
+    def _run(self, path, model_path, crop, stop):
         is_cam, t0, prev_state, fps, last = path.isdigit(), time.monotonic(), None, 0.0, time.monotonic()
+        det, was_escalated = FallDetector(self.cfg), False
+        self.detector = det
         try:
-            with contextlib.closing(process(path, DEFAULT_MODEL, crop, FallDetector(self.cfg))) as stream:
+            with contextlib.closing(process(path, model_path, crop, det)) as stream:
                 for t, frame, points, state, f in stream:
                     if stop.is_set():
                         break
@@ -154,12 +239,20 @@ class Engine:
                     feats = dataclasses.asdict(f) if f else None
                     with self.cond:
                         self.jpg, self.frame_id = jpg, self.frame_id + 1
-                        self.status.update(state=state, t=round(t, 2), fps=round(fps, 1), features=feats)
+                        self.status.update(state=state, t=round(t, 2), fps=round(fps, 1), features=feats,
+                                           still_for=round(det.still_for, 1), escalated=det.escalated)
                         self.series.append({"t": round(t, 3), "state": state, **(feats or {})})
                         if state != prev_state:
                             self.events.append({"t": round(t, 2), "from": prev_state, "to": state,
                                                 "clock": time.strftime("%H:%M:%S")})
+                            if state == FALL_ALERT:
+                                self._capture("Fall alert", t, jpg)
                             prev_state = state
+                        if det.escalated and not was_escalated:
+                            self.events.append({"t": round(t, 2), "from": FALL_ALERT, "to": "NO_MOVEMENT",
+                                                "clock": time.strftime("%H:%M:%S")})
+                            self._capture(f"No movement {self.cfg.still_alert:g}s", t, jpg)
+                        was_escalated = det.escalated
                         self.cond.notify_all()
         except SystemExit as e:  # frames()/make_landmarker report bad sources this way
             with self.cond:
@@ -175,6 +268,7 @@ class Engine:
 
 class Handler(BaseHTTPRequestHandler):
     engine = None  # set by make_server
+    bench = None
 
     def log_message(self, *args):  # keep the console quiet; errors still surface in the page
         pass
@@ -206,7 +300,18 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/stream.mjpg":
             self._stream()
         elif url.path == "/api/status":
-            self._json(self.engine.snapshot())
+            self._json({**self.engine.snapshot(), "benchmark": self.bench.snapshot()})
+        elif url.path.startswith("/api/snapshot/") and url.path.endswith(".jpg"):
+            snap_id = url.path[len("/api/snapshot/"):-len(".jpg")]
+            jpg = self.engine.snapshot_jpg(int(snap_id)) if snap_id.isdigit() else None
+            if jpg is None:
+                self._json({"error": "not found"}, 404)
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(jpg)))
+                self.end_headers()
+                self.wfile.write(jpg)
         elif url.path == "/api/sources":
             self._json(list_sources())
         elif url.path == "/api/results":
@@ -219,7 +324,15 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         try:
             if url.path == "/api/start":
-                self.engine.start(json.loads(self._body() or b"{}").get("source", ""))
+                req = json.loads(self._body() or b"{}")
+                self.engine.start(req.get("source", ""), req.get("model", "lite"))
+                self._json({"ok": True})
+            elif url.path == "/api/benchmark":
+                req = json.loads(self._body() or b"{}")
+                split = req.get("split", "holdout")
+                with self.engine.cond:
+                    self.bench.start(benchmark_clips(split), resolve_model(req.get("model", "lite")),
+                                     self.engine.cfg, split)
                 self._json({"ok": True})
             elif url.path == "/api/stop":
                 self.engine.stop()
@@ -264,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(port=8000):
-    Handler.engine = Engine()
+    Handler.engine, Handler.bench = Engine(), Benchmark()
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     return server

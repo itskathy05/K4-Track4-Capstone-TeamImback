@@ -104,11 +104,11 @@ def process(source, model=DEFAULT_MODEL, crop_right=False, detector=None):
         landmarker.close()
 
 
-def run(source, model=DEFAULT_MODEL, crop_right=False, show=True):
+def run(source, model=DEFAULT_MODEL, crop_right=False, show=True, config=None):
     """Process one source. Returns [(t, state, has_valid_pose)] per frame."""
     history = []
     try:
-        with contextlib.closing(process(source, model, crop_right)) as stream:
+        with contextlib.closing(process(source, model, crop_right, FallDetector(config))) as stream:
             for t, frame, points, state, feats in stream:
                 history.append((t, state, feats is not None))
                 if show:

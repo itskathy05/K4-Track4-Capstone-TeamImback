@@ -96,6 +96,18 @@
   .events .when { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 120px; }
   .muted { color: var(--muted); }
   .error { color: var(--alert); }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .shot { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .shot img { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; background: #000; }
+  .shot div { padding: 8px 10px; font-size: 12px; color: var(--muted); }
+  .shot b { color: var(--alert); }
+  .bench { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 18px; }
+  .bench .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .bench select { min-width: 0; }
+  .bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 12px 0 6px; }
+  .bar i { display: block; height: 100%; width: 0; background: #2b5cff; transition: width .3s; }
+  .score { font-size: 22px; font-weight: 800; }
+  .count { font-size: 11px; background: var(--alert); color: #fff; border-radius: 99px; padding: 0 6px; margin-left: 4px; }
   @media (max-width: 1100px) {
     main { grid-template-columns: 1fr; }
     .charts, .results { grid-template-columns: 1fr; }
@@ -119,6 +131,10 @@
 
 <div class="toolbar">
   <select id="source" aria-label="Video source"></select>
+  <select id="model" aria-label="Pose model" style="min-width:0">
+    <option value="lite">Lite model (fast)</option>
+    <option value="full">Full model (accurate)</option>
+  </select>
   <button id="start" class="primary">&#9654; Start</button>
   <button id="stop">&#9632; Stop</button>
   <label class="file">&#8679; Upload video<input id="upload" type="file" accept="video/*"></label>
@@ -133,7 +149,7 @@
       <div><b>Pick a source and press Start</b>Webcam, a public UR Fall dataset clip, or your own video.<br>
       For the webcam, step back so your shoulders, hips and ideally knees are in view.</div>
     </div>
-    <div class="banner">&#9888; POTENTIAL FALL DETECTED</div>
+    <div class="banner" id="banner">&#9888; POTENTIAL FALL DETECTED</div>
   </div>
 
   <div class="side">
@@ -146,6 +162,7 @@
         <span class="chip" id="chipLow">Hips low</span>
         <span class="chip" id="chipUp">Upright</span>
         <span class="chip" id="chipPose">Pose found</span>
+        <span class="chip" id="chipStill">Motionless</span>
       </div>
     </div>
     <div class="card metrics">
@@ -155,6 +172,8 @@
       <div class="metric"><div class="k">Hip height</div><div class="v" id="mHeight">&ndash;</div></div>
       <div class="metric"><div class="k">Processing</div><div class="v" id="mFps">&ndash;</div></div>
       <div class="metric"><div class="k">Video time</div><div class="v" id="mTime">&ndash;</div></div>
+      <div class="metric"><div class="k">Body motion</div><div class="v" id="mMotion">&ndash;</div></div>
+      <div class="metric"><div class="k">Motionless after fall</div><div class="v" id="mStill">&ndash;</div></div>
     </div>
     <div class="card timeline">
       <h3 class="muted" style="margin:0 0 8px;font-size:13px">State over the last 15 s</h3>
@@ -170,7 +189,7 @@
 
   <div class="charts">
     <div class="card chart"><h3>Torso <span style="color:var(--angle)">&#9632;</span> &amp; leg <span style="color:var(--leg)">&#9632;</span> angle from vertical (&deg;) &middot; shaded = "flat" band</h3><canvas id="cAngle"></canvas></div>
-    <div class="card chart"><h3>Hip speed <span style="color:var(--speed)">&#9632;</span> (torso-lengths/s, + = down) &middot; dashed = trigger</h3><canvas id="cSpeed"></canvas></div>
+    <div class="card chart"><h3>Hip speed <span style="color:var(--speed)">&#9632;</span> &amp; body motion <span style="color:var(--normal)">&#9632;</span> (torso-lengths/s) &middot; dashed = triggers</h3><canvas id="cSpeed"></canvas></div>
     <div class="card chart"><h3>Hip height <span style="color:var(--height)">&#9632;</span> (torso-lengths above feet) &middot; dashed = "low"</h3><canvas id="cHeight"></canvas></div>
   </div>
 
@@ -178,6 +197,7 @@
     <div class="tabs" role="tablist">
       <button class="tab active" data-tab="events">Event log</button>
       <button class="tab" data-tab="tuning">Thresholds (live)</button>
+      <button class="tab" data-tab="snaps">Alert snapshots<span class="count" id="snapCount" hidden></span></button>
       <button class="tab" data-tab="results">Test results</button>
       <button class="tab" data-tab="how">How it works</button>
     </div>
@@ -186,7 +206,22 @@
       <p class="muted" style="margin-top:0">Changes apply immediately to the running detector. <button id="reset">Reset to defaults</button></p>
       <div class="sliders" id="sliders"></div>
     </div>
+    <div class="tabpane" id="tab-snaps">
+      <p class="muted" style="margin-top:0">The frame captured at each fall alert and each "no movement" escalation (newest first).</p>
+      <div class="gallery" id="gallery"><span class="muted">No alerts yet.</span></div>
+    </div>
     <div class="tabpane" id="tab-results">
+      <div class="bench">
+        <div class="row">
+          <b>Re-run the benchmark with the current thresholds</b>
+          <select id="benchSplit" aria-label="Clips"><option value="holdout">holdout (21 clips)</option><option value="tune">tune (10 clips)</option><option value="all">all (31 clips)</option></select>
+          <button id="benchRun" class="primary">Run</button>
+          <span class="muted" id="benchMsg">Move the sliders in "Thresholds", then run to see the effect. Uses the selected pose model.</span>
+        </div>
+        <div class="bar"><i id="benchBar"></i></div>
+        <div class="row"><span class="score" id="benchScore"></span><span class="muted" id="benchInfo"></span></div>
+        <table id="tblBench" style="margin-top:8px"></table>
+      </div>
       <p class="muted" style="margin-top:0">Public UR Fall Detection dataset (Kwolek &amp; Kepski, 2014). Thresholds were tuned on <i>tune</i>; <i>holdout</i> was run once afterwards. Click a row to play that clip.</p>
       <div class="results">
         <div><h3>Holdout</h3><p class="summary" id="sumHoldout"></p><table id="tblHoldout"></table></div>
@@ -211,6 +246,7 @@
         <li>Possible fall with no lying inside <i>possible_window</i> &rarr; back to NORMAL (e.g. sitting down fast).</li>
         <li>Lying down <b>slowly</b> never triggers. A jolt while already lying still is ignored.</li>
         <li>Pose lost &rarr; state frozen (an alert stays up) and speed history reset.</li>
+        <li><b>Long lie:</b> during FALL_ALERT, if body motion stays below <i>still_motion</i> for <i>still_alert</i> seconds, the alert escalates to <b>NO MOVEMENT</b>. Lying motionless after a fall is the dangerous case.</li>
       </ul>
     </div>
   </div>
@@ -240,6 +276,8 @@ const SLIDERS = {
   smooth_alpha: [0.05, 1, 0.05, 'Smoothing: weight of the newest frame (1 = none)'],
   min_visibility: [0, 1, 0.05, 'Landmark visibility needed to use a point'],
   max_gap: [0.1, 3, 0.1, 'Pose gap (s) after which speed history resets'],
+  still_motion: [0.02, 1, 0.01, 'Body motion below this counts as motionless (torso-lengths/s)'],
+  still_alert: [1, 30, 1, 'Seconds motionless during an alert before escalating'],
 };
 let sources = [], last = null, shownSource = null, cfg = null, configSentAt = 0, audio = null, beepTimer = null;
 
@@ -266,7 +304,7 @@ async function loadSources(selectId) {
 async function start(id) {
   if (id) $('source').value = id;
   ensureAudio();
-  try { await api('/api/start', { source: $('source').value }); say(''); }
+  try { await api('/api/start', { source: $('source').value, model: $('model').value }); say(''); }
   catch (e) { say(e.message, true); }
 }
 
@@ -350,11 +388,17 @@ function render(s) {
   $('connText').textContent = s.error ? 'Error' : running ? 'Live: ' + s.label : s.ended ? 'Ended: ' + s.label : 'Idle';
   if (s.error) say(s.error, true);
 
-  const st = STATE[state];
-  $('stateName').textContent = state ? state.replace('_', ' ') : (running ? 'Starting...' : '—');
+  const st = STATE[state], k0 = s.config;
+  $('stateName').textContent = s.escalated ? 'NO MOVEMENT' : state ? state.replace('_', ' ') : (running ? 'Starting...' : '\u2014');
   $('stateName').style.color = st ? st.color : '';
   $('stateCard').style.borderLeftColor = st ? st.color : C('faint');
-  $('stateDesc').textContent = st ? st.desc + (running && !f ? ' (no pose: state frozen)' : '') : (running ? 'Loading model and opening source...' : 'Not running.');
+  let desc = st ? st.desc : (running ? 'Loading model and opening source...' : 'Not running.');
+  if (state === 'FALL_ALERT') desc = s.escalated
+    ? `Motionless for ${s.still_for.toFixed(1)} s after the fall: escalate / call for help!`
+    : `Lying after a fast movement. Motionless ${s.still_for.toFixed(1)} / ${k0.still_alert} s before escalation.`;
+  $('stateDesc').textContent = desc + (running && st && !f ? ' (no pose: state frozen)' : '');
+  $('banner').innerHTML = s.escalated ? '&#9888; NO MOVEMENT AFTER FALL: CALL FOR HELP' : '&#9888; POTENTIAL FALL DETECTED';
+  if (s.model) $('connText').textContent += ' \u00B7 ' + s.model;
   $('stage').classList.toggle('alerting', state === 'FALL_ALERT');
   document.title = state === 'FALL_ALERT' ? '⚠ FALL ALERT - Fall Detection Demo' : 'Fall Detection Demo';
 
@@ -367,6 +411,7 @@ function render(s) {
   on('chipLow', f && (f.hip_height === null || low));
   on('chipUp', f && f.angle <= k.upright_angle && !low);
   on('chipPose', !!f);
+  on('chipStill', f && f.motion < k.still_motion);
 
   $('mAngle').innerHTML = fmt(f && f.angle, 0, '°');
   $('mLeg').innerHTML = fmt(f && f.leg_angle, 0, '°');
@@ -374,19 +419,63 @@ function render(s) {
   $('mHeight').innerHTML = fmt(f && f.hip_height, 2, ' tl');
   $('mFps').innerHTML = fmt(s.fps, 0, ' fps');
   $('mTime').innerHTML = fmt(s.t, 1, ' s');
+  $('mMotion').innerHTML = fmt(f && f.motion, 2, ' tl/s');
+  $('mStill').innerHTML = state === 'FALL_ALERT' ? fmt(s.still_for, 1, ` / ${k.still_alert} s`) : '&ndash;';
+  $('mStill').style.color = s.escalated ? C('alert') : '';
 
   drawChart($('cAngle'), s.series, [['angle', C('angle')], ['leg_angle', C('leg')]], { min: 0, max: 180, ticks: [0, 45, 90, 135, 180], band: [lo, hi], thresholds: [k.upright_angle] });
-  drawChart($('cSpeed'), s.series, [['hip_speed', C('speed')]], { min: -3, max: 6, ticks: [-3, 0, 3, 6], thresholds: [k.fall_speed] });
+  drawChart($('cSpeed'), s.series, [['hip_speed', C('speed')], ['motion', C('normal')]], { min: -3, max: 6, ticks: [-3, 0, 3, 6], thresholds: [k.fall_speed, k.still_motion] });
   drawChart($('cHeight'), s.series, [['hip_height', C('height')]], { min: -0.5, max: 2, ticks: [0, 1, 2], thresholds: [k.hip_low_ratio] });
   drawTimeline(s.series);
 
   $('events').innerHTML = s.events.length ? s.events.map(e =>
-    `<li><span class="when">${e.clock} &middot; ${e.t.toFixed(1)} s</span><span>${e.from ? e.from + ' &rarr; ' : ''}<b style="color:${STATE[e.to].color}">${e.to}</b></span></li>`).join('')
+    `<li><span class="when">${e.clock} &middot; ${e.t.toFixed(1)} s</span><span>${e.from ? e.from + ' &rarr; ' : ''}<b style="color:${(STATE[e.to] || STATE.FALL_ALERT).color}">${e.to}</b></span></li>`).join('')
     : '<li class="muted">No events yet.</li>';
 
   if (Date.now() - configSentAt > 1000) syncSliders(k);
+  renderSnapshots(s.snapshots);
+  renderBench(s.benchmark);
   if (state === 'FALL_ALERT' && !beepTimer) { beep(); beepTimer = setInterval(beep, 700); }
   if (state !== 'FALL_ALERT' && beepTimer) { clearInterval(beepTimer); beepTimer = null; }
+}
+
+// ---- alert snapshots
+let shownSnaps = '';
+function renderSnapshots(snaps) {
+  const key = snaps.map(x => x.id).join(',');
+  if (key === shownSnaps) return;
+  shownSnaps = key;
+  $('snapCount').hidden = !snaps.length; $('snapCount').textContent = snaps.length;
+  $('gallery').innerHTML = snaps.length ? snaps.map(x => `<div class="shot"><img src="/api/snapshot/${x.id}.jpg" alt="${x.kind}">
+    <div><b>${x.kind}</b> at ${x.t.toFixed(1)} s &middot; ${x.clock}<br>${x.label}</div></div>`).join('') : '<span class="muted">No alerts yet.</span>';
+}
+
+// ---- benchmark with current thresholds
+const resultRow = x => `<tr class="clickable" data-clip="${x.clip}"><td>${x.clip}</td><td>${x.expected || ''}</td><td>${x.alerted || ''}</td>
+  <td>${x['first alert (s)'] || ''}</td><td>${x['pose found'] || ''}</td><td><span class="tag ${x.result === 'OK' ? 'ok' : 'miss'}">${x.result}</span></td></tr>`;
+const RESULT_HEAD = '<tr><th>Clip</th><th>Expected</th><th>Alerted</th><th>First alert</th><th>Pose</th><th></th></tr>';
+let shownBench = '';
+function renderBench(b) {
+  const key = JSON.stringify([b.running, b.done, b.split]);
+  if (key === shownBench) return;
+  shownBench = key;
+  $('benchRun').disabled = b.running;
+  $('benchBar').style.width = b.total ? (100 * b.done / b.total) + '%' : '0';
+  if (!b.split) return;
+  const falls = b.rows.filter(r => r.clip.startsWith('fall')), adls = b.rows.filter(r => !r.clip.startsWith('fall'));
+  const ok = rows => rows.filter(r => r.result === 'OK').length;
+  $('benchScore').textContent = `${b.correct}/${b.done}` + (b.running ? ` (running ${b.done}/${b.total})` : '');
+  $('benchInfo').textContent = `${b.split}: falls caught ${ok(falls)}/${falls.length}, daily activities quiet ${ok(adls)}/${adls.length}`;
+  $('tblBench').innerHTML = RESULT_HEAD + b.rows.map(resultRow).join('');
+  bindClipRows();
+}
+$('benchRun').onclick = () => api('/api/benchmark', { split: $('benchSplit').value, model: $('model').value })
+  .then(() => { shownBench = ''; }).catch(e => say(e.message, true));
+function bindClipRows() {
+  document.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => {
+    const s = sources.find(s => s.id.includes('/' + tr.dataset.clip + '-cam0'));
+    if (s) { start(s.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  });
 }
 
 // ---- thresholds
@@ -415,14 +504,9 @@ async function loadResults() {
     const rows = r[split] || [];
     const ok = rows.filter(x => x.result === 'OK').length;
     $(sum).textContent = rows.length ? `${ok}/${rows.length} clips as expected` : 'No results yet (run evaluate.py).';
-    $(tbl).innerHTML = '<tr><th>Clip</th><th>Expected</th><th>Alerted</th><th>First alert</th><th>Pose</th><th></th></tr>' +
-      rows.map(x => `<tr class="clickable" data-clip="${x.clip}"><td>${x.clip}</td><td>${x.expected}</td><td>${x.alerted}</td>
-        <td>${x['first alert (s)']}</td><td>${x['pose found']}</td><td><span class="tag ${x.result === 'OK' ? 'ok' : 'miss'}">${x.result}</span></td></tr>`).join('');
+    $(tbl).innerHTML = RESULT_HEAD + rows.map(resultRow).join('');
   }
-  document.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => {
-    const s = sources.find(s => s.id.includes('/' + tr.dataset.clip + '-cam0'));
-    if (s) { start(s.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-  });
+  bindClipRows();
 }
 
 // ---- main loop

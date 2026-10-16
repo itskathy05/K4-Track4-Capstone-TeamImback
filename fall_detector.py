@@ -27,6 +27,9 @@ class Config:
     alert_hold: float = 1.0         # s lying after a fast movement before FALL_ALERT
     recovery_hold: float = 1.0      # s upright before leaving FALL_ALERT
     recovery_cooldown: float = 2.0  # s in RECOVERY before NORMAL
+    still_motion: float = 0.3       # body motion (torso-lengths/s) below this counts as motionless
+                                    # (landmark jitter while lying still measured 0.07-0.19 on UR adl-10)
+    still_alert: float = 5.0        # s motionless during FALL_ALERT before escalating ("long lie")
 
 
 @dataclass
@@ -37,6 +40,7 @@ class Features:
     hip_height: float | None  # (ankle_y - hip_y) / torso, knees if ankles hidden; None if neither visible
     leg_angle: float | None   # shoulder->ankle line angle from vertical (catches torsos foreshortened
                               # by falling toward the camera); None when ankles are not visible
+    motion: float = 0.0       # smoothed hip+shoulder movement, torso-lengths/s
 
 
 def _mid(points, a, b, min_vis):
@@ -56,7 +60,18 @@ class FallDetector:
         self.upright_since = None
         self.ref_torso = None  # torso length (px) while upright; scales speeds and heights
         self._ema = None       # smoothed [hip_x, hip_y, sh_x, sh_y, ankle_x, ankle_y, knee_y] (None if hidden)
-        self._prev = None      # (t, hip_y, angle) of the last valid frame
+        self._prev = None      # (t, hip_x, hip_y, sh_x, sh_y, angle) of the last valid frame
+        self._motion, self._last_t = 0.0, 0.0
+        self.still_since = None  # start of motionlessness during FALL_ALERT
+
+    @property
+    def still_for(self):
+        """Seconds the person has been motionless during the current FALL_ALERT (pose gaps count)."""
+        return 0.0 if self.still_since is None else self._last_t - self.still_since
+
+    @property
+    def escalated(self):
+        return self.state == FALL_ALERT and self.still_for >= self.cfg.still_alert
 
     def update(self, points, t):
         """points: indexable by landmark id -> (x_px, y_px, visibility), or None when no pose.
@@ -102,12 +117,15 @@ class FallDetector:
         if gap:
             hip_speed = angle_rate = 0.0
         else:
-            dt = max(t - self._prev[0], 1e-3)
-            hip_speed = (hy - self._prev[1]) / dt / self.ref_torso
-            angle_rate = abs(angle - self._prev[2]) / dt
-        self._prev = (t, hy, angle)
+            pt, phx, phy, psx, psy, pangle = self._prev
+            dt = max(t - pt, 1e-3)
+            hip_speed = (hy - phy) / dt / self.ref_torso
+            angle_rate = abs(angle - pangle) / dt
+            moved = (math.hypot(hx - phx, hy - phy) + math.hypot(sx - psx, sy - psy)) / 2
+            self._motion = 0.7 * self._motion + 0.3 * moved / dt / self.ref_torso
+        self._prev = (t, hx, hy, sx, sy, angle)
         leg_angle = None if ay is None else math.degrees(math.atan2(abs(ax - sx), ay - sy))
-        return Features(angle, hip_speed, angle_rate, hip_height, leg_angle)
+        return Features(angle, hip_speed, angle_rate, hip_height, leg_angle, self._motion)
 
     def _upright(self, angle, hip_height):
         """Torso near vertical and hips not on the floor (a torso pointing at the camera looks vertical)."""
@@ -116,6 +134,7 @@ class FallDetector:
 
     def _enter(self, state, t):
         self.state, self.state_since = state, t
+        self.still_since = None
 
     def _step(self, f, t):
         c = self.cfg
@@ -123,6 +142,7 @@ class FallDetector:
         flat = lo <= f.angle <= hi or (f.leg_angle is not None and lo <= f.leg_angle <= hi)
         lying = flat and (f.hip_height is None or f.hip_height <= c.hip_low_ratio)
         upright = self._upright(f.angle, f.hip_height)
+        self._last_t = t
         # explicit None checks: t == 0.0 is a valid start time
         if not lying:
             self.lying_since = None
@@ -144,6 +164,10 @@ class FallDetector:
             elif self.lying_since is None and t - self.state_since > c.possible_window:
                 self._enter(NORMAL, t)
         elif self.state == FALL_ALERT:
+            if f.motion >= c.still_motion:
+                self.still_since = None
+            elif self.still_since is None:
+                self.still_since = t
             if self.upright_since is not None and t - self.upright_since >= c.recovery_hold:
                 self._enter(RECOVERY, t)
         elif t - self.state_since >= c.recovery_cooldown:  # RECOVERY

@@ -74,3 +74,29 @@ def test_server_serves_page_sources_and_validates_config():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_resolve_model_only_accepts_known_models():
+    from webapp import resolve_model
+    assert resolve_model("lite").endswith("pose_landmarker_lite.task")
+    for bad in ("heavy", "../main.py", ""):
+        with pytest.raises(ValueError):
+            resolve_model(bad)
+
+
+def test_benchmark_scores_clips_with_a_snapshot_of_the_thresholds():
+    from webapp import Benchmark
+    seen = []
+
+    def fake_run(path, model, cfg):
+        seen.append(cfg.fall_speed)
+        return [(0.0, "FALL_ALERT" if "fall-" in path else "NORMAL", True)]
+
+    cfg = Config()
+    bench = Benchmark(runner=fake_run)
+    bench.start([("fall-01", "a/fall-01-cam0.mp4"), ("adl-01", "a/adl-01-cam0.mp4")], "lite", cfg, "tune")
+    cfg.fall_speed = 99.0  # moving a slider mid-run must not change this run
+    bench.join()
+    s = bench.snapshot()
+    assert s["done"] == s["total"] == 2 and s["correct"] == 2 and not s["running"]
+    assert [r["result"] for r in s["rows"]] == ["OK", "OK"] and seen == [1.5, 1.5]

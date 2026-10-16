@@ -140,3 +140,22 @@ def test_jitter_while_already_lying_does_not_alert_instantly():
     jitter = [pose(**dict(LYING, hip_y=LYING["hip_y"] + 12))]
     states = run(lying + jitter + [pose(**LYING)] * 90)
     assert set(states) == {NORMAL}
+
+
+def test_motionless_after_fall_escalates():
+    det = FallDetector()
+    run(FALL + [pose(**LYING)] * 180, det=det)  # 6 s still on the floor after the alert
+    assert det.state == FALL_ALERT and det.escalated and det.still_for >= 5.0
+
+
+def test_moving_after_fall_does_not_escalate():
+    det = FallDetector()
+    wriggle = [pose(**dict(LYING, hip_y=LYING["hip_y"] + (10 if i % 2 else -10))) for i in range(180)]
+    states = run(FALL + wriggle, det=det)
+    assert states[-1] == FALL_ALERT and not det.escalated
+
+
+def test_escalation_clears_after_recovery():
+    det = FallDetector()
+    run(FALL + [pose(**LYING)] * 180 + ramp(12, LYING, STAND) + [pose(**STAND)] * 120, det=det)
+    assert det.state == NORMAL and not det.escalated and det.still_for == 0.0

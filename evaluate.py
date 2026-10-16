@@ -21,6 +21,16 @@ def expand(patterns):
     return paths
 
 
+def score_clip(name, history):
+    """One results-table row for a clip: fall-* clips should alert, adl-* clips should not."""
+    alerts = [t for t, state, _ in history if state == FALL_ALERT]
+    expected = name.startswith("fall")
+    pose_pct = 100 * sum(p for _, _, p in history) / max(len(history), 1)
+    return {"clip": name, "expected": "alert" if expected else "none", "alerted": "yes" if alerts else "no",
+            "first alert (s)": f"{alerts[0]:.1f}" if alerts else "-", "pose found": f"{pose_pct:.0f}%",
+            "result": "OK" if bool(alerts) == expected else "MISS"}
+
+
 if __name__ == "__main__":
     paths = expand(sys.argv[1:] or ["test_videos/*/*.mp4"])
     if not paths:
@@ -34,11 +44,7 @@ if __name__ == "__main__":
         if not history:
             print(f"| {name} | - | - | - | - | ERROR: no frames read |")
             continue
-        alerts = [t for t, state, _ in history if state == FALL_ALERT]
-        expected = name.startswith("fall")
-        ok = bool(alerts) == expected
-        correct += ok
-        pose_pct = 100 * sum(p for _, _, p in history) / max(len(history), 1)
-        print(f"| {name} | {'alert' if expected else 'none'} | {'yes' if alerts else 'no'} | "
-              f"{f'{alerts[0]:.1f}' if alerts else '-'} | {pose_pct:.0f}% | {'OK' if ok else 'MISS'} |")
+        row = score_clip(name, history)
+        correct += row["result"] == "OK"
+        print("| " + " | ".join(row.values()) + " |")
     print(f"\n{correct}/{len(paths)} clips as expected")
